@@ -103,8 +103,7 @@ class Stripe {
 
   /// Confirm and authenticate a SetupIntent
   /// https://stripe.com/docs/api/setup_intents/confirm
-  Future<Map<String, dynamic>> confirmSetupIntent(String clientSecret, String paymentMethod,
-      {String? webReturnPath}) async {
+  Future<Map<String, dynamic>> confirmSetupIntent(String clientSecret, String paymentMethod, {String? webReturnPath}) async {
     final Map<String, dynamic> intent = await api.confirmSetupIntent(
       clientSecret,
       data: {
@@ -124,6 +123,23 @@ class Stripe {
   /// https://stripe.com/docs/payments/payment-intents/android
   Future<Map<String, dynamic>> confirmPayment(String paymentIntentClientSecret, {String? paymentMethodId}) async {
     final data = {'return_url': getReturnUrlForSca()};
+    if (paymentMethodId != null) data['payment_method'] = paymentMethodId;
+    final Map<String, dynamic> paymentIntent = await api.confirmPaymentIntent(
+      paymentIntentClientSecret,
+      data: data,
+    );
+    if (paymentIntent['status'] == 'requires_action') {
+      return authenticatePaymentWithNextAction(paymentIntent['next_action']);
+    } else {
+      return paymentIntent;
+    }
+  }
+
+  /// Confirm and authenticate an alipay payment.
+  /// Returns the PaymentIntent.
+  /// https://stripe.com/docs/payments/payment-intents/android
+  Future<Map<String, dynamic>> confirmAlipayPayment(String paymentIntentClientSecret, String paymentMethodId, String alipayReturnUrl) async {
+    final data = {'return_url': alipayReturnUrl};
     if (paymentMethodId != null) data['payment_method'] = paymentMethodId;
     final Map<String, dynamic> paymentIntent = await api.confirmPaymentIntent(
       paymentIntentClientSecret,
@@ -173,10 +189,22 @@ class Stripe {
   }
 
   Future<Map<String, dynamic>> _authenticateIntent(Map action, IntentProvider callback) async {
-    final String url = action['redirect_to_url']['url'];
+    late String url;
+    late String returnUrlStr;
+    switch (action['type']) {
+      case 'alipay_handle_redirect':
+        url = action['alipay_handle_redirect']['url'];
+        returnUrlStr = action['alipay_handle_redirect']['return_url'];
+        break;
+      default:
+        url = action['redirect_to_url']['url'];
+        returnUrlStr = action['redirect_to_url']['return_url'];
+        break;
+    }
+
     final completer = Completer<Map<String, dynamic>>();
     if (!kIsWeb) {
-      final returnUrl = Uri.parse(action['redirect_to_url']['return_url']);
+      final returnUrl = Uri.parse(returnUrlStr);
       late StreamSubscription sub;
       sub = uriLinkStream.listen((Uri? uri) async {
         if (uri != null &&
